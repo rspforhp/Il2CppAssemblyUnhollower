@@ -86,10 +86,10 @@ namespace UnhollowerRuntimeLib
                 return UnityVersionHandler.Wrap((Il2CppClass*)classPointer);
             }).ToArray());
         }
-        
+
         public static void RegisterTypeInIl2CppImpl(Type type, bool logSuccess, params INativeClassStruct[] interfaces)
         {
-            if(type == null)
+            if (type == null)
                 throw new ArgumentException($"Type argument cannot be null");
 
             if (type.IsGenericType || type.IsGenericTypeDefinition)
@@ -97,17 +97,17 @@ namespace UnhollowerRuntimeLib
 
             var currentPointer = ReadClassPointerForType(type);
             if (currentPointer != IntPtr.Zero)
-                return;//already registered in il2cpp
+                return; //already registered in il2cpp
 
             var baseType = type.BaseType;
             if (baseType == null)
                 throw new ArgumentException($"Class {type} does not inherit from a class registered in il2cpp");
 
-            var baseClassPointer = UnityVersionHandler.Wrap((Il2CppClass*)ReadClassPointerForType(baseType));
+            var baseClassPointer = UnityVersionHandler.Wrap((Il2CppClass*) ReadClassPointerForType(baseType));
             if (baseClassPointer == null)
             {
                 RegisterTypeInIl2Cpp(baseType, logSuccess);
-                baseClassPointer = UnityVersionHandler.Wrap((Il2CppClass*)ReadClassPointerForType(baseType));
+                baseClassPointer = UnityVersionHandler.Wrap((Il2CppClass*) ReadClassPointerForType(baseType));
             }
 
             if (baseClassPointer.ValueType || baseClassPointer.EnumType)
@@ -127,7 +127,8 @@ namespace UnhollowerRuntimeLib
 
             lock (InjectedTypes)
                 if (!InjectedTypes.Add(type.FullName))
-                    throw new ArgumentException($"Type with FullName {type.FullName} is already injected. Don't inject the same type twice, or use a different namespace");
+                    throw new ArgumentException(
+                        $"Type with FullName {type.FullName} is already injected. Don't inject the same type twice, or use a different namespace");
 
             if (ourOriginalGenericGetMethod == null) HookGenericMethodGetMethod();
             if (ourOriginalTypeToClassMethod == null) HookClassFromType();
@@ -141,7 +142,7 @@ namespace UnhollowerRuntimeLib
             classPointer.Parent = baseClassPointer.ClassPointer;
             classPointer.ElementClass = classPointer.Class = classPointer.CastClass = classPointer.ClassPointer;
             classPointer.NativeSize = -1;
-            classPointer.ActualSize = classPointer.InstanceSize = baseClassPointer.InstanceSize + (uint)IntPtr.Size;
+            classPointer.ActualSize = classPointer.InstanceSize = baseClassPointer.InstanceSize + (uint) IntPtr.Size;
 
             classPointer.Initialized = true;
             classPointer.InitializedAndNoError = true;
@@ -155,9 +156,15 @@ namespace UnhollowerRuntimeLib
             classPointer.ThisArg.Type = classPointer.ByValArg.Type = Il2CppTypeEnum.IL2CPP_TYPE_CLASS;
             classPointer.ThisArg.ByRef = true;
 
-            classPointer.Flags = baseClassPointer.Flags; // todo: adjust flags?
+            
+                classPointer.Flags = baseClassPointer.Flags; // todo: adjust flags?
+                //Console.WriteLine(classPointer.Flags);
+                if (classPointer.Flags.HasFlag(Il2CppClassAttributes.TYPE_ATTRIBUTE_ABSTRACT))
+                {
+                    classPointer.Flags = Il2CppClassAttributes.TYPE_ATTRIBUTE_PUBLIC;
+                }
 
-            var eligibleMethods = type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly).Where(IsMethodEligible).ToArray();
+                    var eligibleMethods = type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly).Where(IsMethodEligible).ToArray();
             var methodCount = 2 + eligibleMethods.Length; // 1 is the finalizer, 1 is empty ctor
 
             classPointer.MethodCount = (ushort)methodCount;
@@ -172,10 +179,11 @@ namespace UnhollowerRuntimeLib
             {
                 var methodInfo = eligibleMethods[i];
                 var methodInfoPointer = methodPointerArray[i + 2] = ConvertMethodInfo(methodInfo, classPointer);
-                if (methodInfo.IsGenericMethod)
-                    InflatedMethodFromContextDictionary.Add((IntPtr)methodInfoPointer, (methodInfo, new Dictionary<IntPtr, IntPtr>()));
-                var methodName = methodInfo.Name;
-                infos[(methodInfo.Name, methodInfo.GetParameters().Length, methodInfo.IsGenericMethod)] = i + 2;
+                    if (methodInfo.IsGenericMethod)
+                        InflatedMethodFromContextDictionary.Add((IntPtr)methodInfoPointer, (methodInfo, new Dictionary<IntPtr, IntPtr>()));
+                    var methodName = methodInfo.Name;
+                    infos[(methodInfo.Name, methodInfo.GetParameters().Length, methodInfo.IsGenericMethod)] = i + 2;
+                
             }
 
             var vTablePointer = (VirtualInvokeData*)classPointer.VTable;
@@ -185,55 +193,119 @@ namespace UnhollowerRuntimeLib
             {
                 vTablePointer[i] = baseVTablePointer[i];
                 var vTableMethod = UnityVersionHandler.Wrap(vTablePointer[i].method);
-                if (Marshal.PtrToStringAnsi(vTableMethod.Name) == "Finalize") // slot number is not static
+                if (vTableMethod != null)
                 {
-                    vTablePointer[i].method = methodPointerArray[0];
-                    vTablePointer[i].methodPtr = finalizeMethod.MethodPointer;
+                    
+                    if (Marshal.PtrToStringAnsi(vTableMethod.Name) == "Finalize") // slot number is not static
+                    {
+                        //Console.WriteLine("if "+i);
+                        vTablePointer[i].method = methodPointerArray[0];
+                        //Console.WriteLine("vTablePointer[i].method "+i);
+                        vTablePointer[i].methodPtr = finalizeMethod.MethodPointer;
+                        //Console.WriteLine("vTablePointer[i].methodPtr "+i);
+                    }
                 }
+                else
+                {
+                    //Console.WriteLine("if "+i);
+                    vTablePointer[i].method = methodPointerArray[0];
+                    //Console.WriteLine("vTablePointer[i].method "+i);
+                    vTablePointer[i].methodPtr = finalizeMethod.MethodPointer;
+                    //Console.WriteLine("vTablePointer[i].methodPtr "+i);
+                }
+          
             }
 
             var offsets = new int[interfaces.Length];
-
+            //Console.WriteLine("offsets ");
             var index = baseClassPointer.VtableCount;
+            //Console.WriteLine("index ");
             for (var i = 0; i < interfaces.Length; i++)
             {
+                //Console.WriteLine("before "+i);
                 offsets[i] = index;
+                //Console.WriteLine("offsets[i] "+i);
                 for (var j = 0; j < interfaces[i].MethodCount; j++)
                 {
+                    //Console.WriteLine("before "+i+" " +j);
                     var vTableMethod = UnityVersionHandler.Wrap(interfaces[i].Methods[j]);
+                    //Console.WriteLine("vTableMethod "+i+" " +j);
                     var methodName = Marshal.PtrToStringAnsi(vTableMethod.Name);
+                    //Console.WriteLine("methodName "+i+" " +j);
                     if (!infos.TryGetValue((methodName, vTableMethod.ParametersCount, (vTableMethod.ExtraFlags & MethodInfoExtraFlags.is_generic) != 0), out var methodIndex))
                     {
                         ++index;
                         continue;
                     }
+                    //Console.WriteLine("if "+i+" " +j);
                     var method = methodPointerArray[methodIndex];
+                    //Console.WriteLine("method "+i+" " +j);
                     vTablePointer[index].method = method;
+                    //Console.WriteLine("vTablePointer[index].method "+i+" " +j);
                     vTablePointer[index].methodPtr = UnityVersionHandler.Wrap(method).MethodPointer;
+                    //Console.WriteLine("vTablePointer[index].methodPtr "+i+" " +j);
                     ++index;
                 }
             }
-
+            //Console.WriteLine("for ");
             var interfaceCount = baseClassPointer.InterfaceCount + interfaces.Length;
+            //Console.WriteLine("interfaceCount ");
+
             classPointer.InterfaceCount = (ushort)interfaceCount;
+            //Console.WriteLine("classPointer.InterfaceCount ");
+
             classPointer.ImplementedInterfaces = (Il2CppClass**)Marshal.AllocHGlobal(interfaceCount * IntPtr.Size);
+            //Console.WriteLine("classPointer.ImplementedInterfaces ");
+
             for (int i = 0; i < baseClassPointer.InterfaceCount; i++)
-                classPointer.ImplementedInterfaces[i] = baseClassPointer.ImplementedInterfaces[i];
+            {
+                //Console.WriteLine("before "+i);
+                if (baseClassPointer.ImplementedInterfaces != null)
+                {
+                    classPointer.ImplementedInterfaces[i] = baseClassPointer.ImplementedInterfaces[i];
+                }
+                //Console.WriteLine("after "+i);
+            }
+
             for (int i = baseClassPointer.InterfaceCount; i < interfaceCount; i++)
+            {
+                //Console.WriteLine("before "+i);
                 classPointer.ImplementedInterfaces[i] = interfaces[i - baseClassPointer.InterfaceCount].ClassPointer;
+                //Console.WriteLine("after "+i);
+            }
 
             var interfaceOffsetsCount = baseClassPointer.InterfaceOffsetsCount + interfaces.Length;
+            //Console.WriteLine("interfaceOffsetsCount ");
+
             classPointer.InterfaceOffsetsCount = (ushort)interfaceOffsetsCount;
+            //Console.WriteLine("classPointer.InterfaceOffsetsCount ");
+
             classPointer.InterfaceOffsets = (Il2CppRuntimeInterfaceOffsetPair*)Marshal.AllocHGlobal(interfaceOffsetsCount * Marshal.SizeOf<Il2CppRuntimeInterfaceOffsetPair>());
+            //Console.WriteLine("classPointer.InterfaceOffsets  ");
             for (int i = 0; i < baseClassPointer.InterfaceOffsetsCount; i++)
-                classPointer.InterfaceOffsets[i] = baseClassPointer.InterfaceOffsets[i];
+            {              
+                //Console.WriteLine("before "+i);
+                if (baseClassPointer.InterfaceOffsets != null)
+                {               
+                    classPointer.InterfaceOffsets[i] = baseClassPointer.InterfaceOffsets[i];
+                }
+                //Console.WriteLine("after "+i);
+            }
+
             for (int i = baseClassPointer.InterfaceOffsetsCount; i < interfaceOffsetsCount; i++)
+            {
+                //Console.WriteLine("before "+i);
                 classPointer.InterfaceOffsets[i] = new Il2CppRuntimeInterfaceOffsetPair {
                     interfaceType = interfaces[i - baseClassPointer.InterfaceOffsetsCount].ClassPointer,
                     offset = offsets[i - baseClassPointer.InterfaceOffsetsCount]
-                };
+                }; 
+                //Console.WriteLine("after "+i);
+            }
+                
 
             var TypeHierarchyDepth = 1 + baseClassPointer.TypeHierarchyDepth;
+            //Console.WriteLine("TypeHierarchyDepth  ");
+
             classPointer.TypeHierarchyDepth = (byte)TypeHierarchyDepth;
             classPointer.TypeHierarchy = (Il2CppClass**)Marshal.AllocHGlobal(TypeHierarchyDepth * IntPtr.Size);
             for (var i = 0; i < TypeHierarchyDepth; i++)
